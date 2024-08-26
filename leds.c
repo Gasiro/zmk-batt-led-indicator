@@ -20,41 +20,69 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #define LED_GPIO_NODE_ID DT_COMPAT_GET_ANY_STATUS_OKAY(gpio_leds)
 
-BUILD_ASSERT(DT_NODE_EXISTS(DT_ALIAS(led_red)), "An alias for a red LED is not found for RGBLED_WIDGET");
-BUILD_ASSERT(DT_NODE_EXISTS(DT_ALIAS(led_green)), "An alias for a green LED is not found for RGBLED_WIDGET");
-BUILD_ASSERT(DT_NODE_EXISTS(DT_ALIAS(led_blue)), "An alias for a blue LED is not found for RGBLED_WIDGET");
-
-// GPIO-based LED device and indices of red/green/blue LEDs inside its DT node
+// GPIO-based LED device and indices of LED inside its DT node
 static const struct device *led_dev = DEVICE_DT_GET(LED_GPIO_NODE_ID);
-static const uint8_t rgb_idx[] = {DT_NODE_CHILD_IDX(DT_ALIAS(led_red)),
-                                  DT_NODE_CHILD_IDX(DT_ALIAS(led_green)),
-                                  DT_NODE_CHILD_IDX(DT_ALIAS(led_blue))};
+
+BUILD_ASSERT(DT_NODE_EXISTS(DT_ALIAS(indicator_led)),
+             "An alias for indicator-led is not found for RGBLED_WIDGET");
+static const uint8_t led_idx = DT_NODE_CHILD_IDX(DT_ALIAS(indicator_led));
 
 // flag to indicate whether the initial boot up sequence is complete
 static bool initialized = false;
 
-// color values as specified by an RGB bitfield
-enum color_t {
-    LED_BLACK,   // 0b000
-    LED_RED,     // 0b001
-    LED_GREEN,   // 0b010
-    LED_YELLOW,  // 0b011
-    LED_BLUE,    // 0b100
-    LED_MAGENTA, // 0b101
-    LED_CYAN,    // 0b110
-    LED_WHITE    // 0b111
+// blink rates as specified by different conditions
+enum blink_rate_t {
+    BLINK_OFF,     // LED off
+    BLINK_SLOW,
+    BLINK_MEDIUM,
+    BLINK_FAST,
+    BLINK_FRANTIC
 };
 
-// a blink work item as specified by the color and duration
+// a blink work item as specified by the blink rate and duration
 struct blink_item {
-    enum color_t color;
+    enum blink_rate_t rate;
     uint16_t duration_ms;
     bool first_item;
     uint16_t sleep_ms;
 };
 
+
 // define message queue of blink work items, that will be processed by a separate thread
 K_MSGQ_DEFINE(led_msgq, sizeof(struct blink_item), 16, 1);
+
+static void led_do_blink(enum blink_rate_t rate) {
+    switch (rate) {
+        case BLINK_OFF:
+            led_off(led_dev, led_idx);
+            break;
+        case BLINK_SLOW:
+            led_on(led_dev, led_idx);
+            k_sleep(K_MSEC(300));
+            led_off(led_dev, led_idx);
+            k_sleep(K_MSEC(300));
+            break;
+        case BLINK_MEDIUM:
+            led_on(led_dev, led_idx);
+            k_sleep(K_MSEC(150));
+            led_off(led_dev, led_idx);
+            k_sleep(K_MSEC(150));
+            break;
+        case BLINK_FAST:
+            led_on(led_dev, led_idx);
+            k_sleep(K_MSEC(80));
+            led_off(led_dev, led_idx);
+            k_sleep(K_MSEC(80));
+            break;
+        case BLINK_FRANTIC:
+            led_on(led_dev, led_idx);
+            k_sleep(K_MSEC(20));
+            led_off(led_dev, led_idx);
+            k_sleep(K_MSEC(20));
+            break;
+    }
+}
+
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
 static void output_blink(void) {
@@ -63,22 +91,22 @@ static void output_blink(void) {
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     uint8_t profile_index = zmk_ble_active_profile_index();
     if (zmk_ble_active_profile_is_connected()) {
-        LOG_INF("Profile %d connected, blinking blue", profile_index);
-        blink.color = LED_BLUE;
+        LOG_INF("Profile %d connected, blinking off", profile_index);
+        blink.rate = BLINK_OFF;
     } else if (zmk_ble_active_profile_is_open()) {
-        LOG_INF("Profile %d open, blinking yellow", profile_index);
-        blink.color = LED_YELLOW;
+        LOG_INF("Profile %d open, blinking fast", profile_index);
+        blink.rate = BLINK_FAST;
     } else {
-        LOG_INF("Profile %d not connected, blinking red", profile_index);
-        blink.color = LED_RED;
+        LOG_INF("Profile %d not connected, blinking slow", profile_index);
+        blink.rate = BLINK_SLOW;
     }
 #else
     if (zmk_split_bt_peripheral_is_connected()) {
-        LOG_INF("Peripheral connected, blinking blue");
-        blink.color = LED_BLUE;
+        LOG_INF("Peripheral connected, blinking off");
+        blink.rate = BLINK_SLOW;
     } else {
-        LOG_INF("Peripheral not connected, blinking red");
-        blink.color = LED_RED;
+        LOG_INF("Peripheral not connected, blinking fast");
+        blink.rate = BLINK_FAST;
     }
 #endif
 
@@ -112,10 +140,10 @@ static int led_battery_listener_cb(const zmk_event_t *eh) {
     uint8_t battery_level = as_zmk_battery_state_changed(eh)->state_of_charge;
 
     if (battery_level > 0 && battery_level <= CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_CRITICAL) {
-        LOG_INF("Battery level %d, blinking red for critical", battery_level);
+        LOG_INF("Battery level %d, blinking fast for critical", battery_level);
 
         struct blink_item blink = {.duration_ms = CONFIG_RGBLED_WIDGET_BATTERY_BLINK_MS,
-                                   .color = LED_RED};
+                                   .rate = BLINK_FAST};
         k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
     }
     return 0;
@@ -139,16 +167,18 @@ static int led_layer_listener_cb(const zmk_event_t *eh) {
     }
 
     uint8_t index = zmk_keymap_highest_layer_active();
-    static const struct blink_item blink = {.duration_ms = CONFIG_RGBLED_WIDGET_LAYER_BLINK_MS,
-                                            .color = LED_CYAN,
-                                            .sleep_ms = CONFIG_RGBLED_WIDGET_LAYER_BLINK_MS};
-    static const struct blink_item last_blink = {.duration_ms = CONFIG_RGBLED_WIDGET_LAYER_BLINK_MS,
-                                                 .color = LED_CYAN};
+    static const struct blink_item blink = {
+        .duration_ms = CONFIG_RGBLED_WIDGET_LAYER_BLINK_MS,
+        .rate = BLINK_FRANTIC,
+        .sleep_ms = CONFIG_RGBLED_WIDGET_LAYER_BLINK_MS};
+    static const struct blink_item final_blink = {
+        .duration_ms = CONFIG_RGBLED_WIDGET_LAYER_BLINK_MS,
+        .rate = BLINK_MEDIUM};
     for (int i = 0; i < index; i++) {
         if (i < index - 1) {
             k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
         } else {
-            k_msgq_put(&led_msgq, &last_blink, K_NO_WAIT);
+            k_msgq_put(&led_msgq, &final_blink, K_NO_WAIT);
         }
     }
     return 0;
@@ -168,25 +198,10 @@ extern void led_process_thread(void *d0, void *d1, void *d2) {
         // wait until a blink item is received and process it
         struct blink_item blink;
         k_msgq_get(&led_msgq, &blink, K_FOREVER);
-        LOG_DBG("Got a blink item from msgq, color %d, duration %d", blink.color,
+        LOG_DBG("Got a blink item from msgq, rate %d, duration %d", blink.rate,
                 blink.duration_ms);
 
-        // turn appropriate LEDs on
-        for (uint8_t pos = 0; pos < 3; pos++) {
-            if (BIT(pos) & blink.color) {
-                led_on(led_dev, rgb_idx[pos]);
-            }
-        }
-
-        // wait for blink duration
-        k_sleep(K_MSEC(blink.duration_ms));
-
-        // turn appropriate LEDs off
-        for (uint8_t pos = 0; pos < 3; pos++) {
-            if (BIT(pos) & blink.color) {
-                led_off(led_dev, rgb_idx[pos]);
-            }
-        }
+        led_do_blink(blink.rate);
 
         // wait interval before processing another blink
         if (blink.sleep_ms > 0) {
@@ -220,17 +235,17 @@ extern void led_init_thread(void *d0, void *d1, void *d2) {
     };
 
     if (battery_level == 0) {
-        LOG_INF("Battery level undetermined (zero), blinking magenta");
-        blink.color = LED_MAGENTA;
+        LOG_INF("Battery level undetermined (zero), blinking off");
+        blink.rate = BLINK_OFF;
     } else if (battery_level >= CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_HIGH) {
-        LOG_INF("Battery level %d, blinking green", battery_level);
-        blink.color = LED_GREEN;
+        LOG_INF("Battery level %d, blinking slow", battery_level);
+        blink.rate = BLINK_SLOW;
     } else if (battery_level >= CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_LOW) {
-        LOG_INF("Battery level %d, blinking yellow", battery_level);
-        blink.color = LED_YELLOW;
+        LOG_INF("Battery level %d, blinking fast", battery_level);
+        blink.rate = BLINK_FAST;
     } else {
-        LOG_INF("Battery level %d, blinking red", battery_level);
-        blink.color = LED_RED;
+        LOG_INF("Battery level %d", battery_level);
+        // blink.color = LED_RED;
     }
 
     k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
