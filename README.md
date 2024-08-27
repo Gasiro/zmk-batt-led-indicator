@@ -1,7 +1,9 @@
-# LED indicators using an RGB LED
+# LED indicators using single LED
 
-This is a ZMK module containing a simple widget that utilizes a (typically built-in) RGB LED controlled by three separate GPIOs.
-It is used to indicate battery level and BLE connection status in a minimalist way.
+This is a ZMK module containing a simple widget that utilizes a (typically built-in) LED controlled by a single GPIO.
+It is used to indicate battery level, layer, and BLE connection status in a very minimalist way.
+
+If you have access to RGB LEDs, addressed by 3 GPIOs (e.g. on Xiao BLE), you're probably better off using [caksoylar's rgb led widget](https://github.com/caksoylar/zmk-rgbled-widget/), which this is based off.
 
 ## Usage
 
@@ -12,15 +14,15 @@ manifest:
   remotes:
     - name: zmkfirmware
       url-base: https://github.com/zmkfirmware
-    - name: caksoylar
-      url-base: https://github.com/caksoylar
+    - name: bluedrink9
+      url-base: https://github.com/bluedrink9
   projects:
     - name: zmk
       remote: zmkfirmware
       revision: main
       import: app/west.yml
-    - name: zmk-rgbled-widget
-      remote: caksoylar
+    - name: zmk-poor-mans-led-indicator
+      remote: bluedrink9
       revision: main
   self:
     path: config
@@ -29,82 +31,93 @@ manifest:
 If you are building locally, see the instructions for [building with external modules](https://zmk.dev/docs/development/build-flash#building-with-external-modules)
 in ZMK docs.
 
-Then, if you are using one of the boards supported by the [`rgbled_adapter`](/boards/shields/rgbled_adapter) shield such as Xiao BLE,
-just add the `rgbled_adapter` as an additional shield to your build, e.g. in `build.yaml`:
-
-```yaml build.yaml
----
-include:
-  - board: seeeduino_xiao_ble
-    shield: hummingbird rgbled_adapter
-```
-
-For other keyboards, see the "Adding support" section below.
-
 ## Features
 
-<details>
-  <summary>Short video demo</summary>
-  See below video for a short demo, running through power on, profile switching and power offs.
-  
-  https://github.com/caksoylar/zmk-rgbled-widget/assets/7876996/cfd89dd1-ff24-4a33-8563-2fdad2a828d4
-</details>
+Currently the widget can do the following:
 
-Currently the widget does the following:
+### Indicate battery on boot
 
-- Blink 🟢/🟡/🔴 on boot depending on battery level (for both central/peripherals), thresholds set by `CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_HIGH` and `CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_LOW`
-- Blink 🔴 on every battery level change if below critical battery level (`CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_CRITICAL`)
-- Blink 🔵 for connected, 🟡 for open (advertising), 🔴 for disconnected profiles on every BT profile switch (on central side for splits)
-- Blink 🔵 for connected, 🔴 for disconnected on peripheral side of splits
+If `CONFIG_INDICATOR_LED_SHOW_BATTERY_ON_BOOT=y`:
 
-_Experimental_: Enable `CONFIG_RGBLED_WIDGET_SHOW_LAYER_CHANGE` to show the highest active layer on every layer change
-using a sequence of N cyan color blinks, where N is the zero-based index of the layer.
+- Blink on boot depending on battery level (for both central/peripherals), thresholds set by `CONFIG_INDICATOR_LED_BATTERY_LEVEL_*` for HIGH, LOW and CRITICAL. Blink repeat counts set by `INDICATOR_LED_BATTERY_*_BLINK_REPEAT`, defaults in brackets below.
+By default:
+- High battery = blink (2) times slowly,
+- low battery = blink (4) times at a medium pace,
+- critical battery = blink (6) times frantically.
+
+If `CONFIG_INDICATOR_LED_SHOW_CRITICAL_BATTERY_CHANGES=y`:
+
+- Blink quickly once on every battery level change if below critical battery level (`CONFIG_INDICATOR_LED_BATTERY_LEVEL_CRITICAL`)
+
+### Indicate BLE connection status changes
+
+If `CONFIG_INDICATOR_LED_SHOW_BLE=y`, on every BT profile switch (on central side for splits):
+- Blink medium pace n times for connected (where n is the profile number + 1),
+- Blink slowly and constantly for open (advertising),
+- Blink for a second one time if the profile is disconnected,
+
+If `CONFIG_INDICATOR_LED_SHOW_PERIPHERAL_CONNECTED=y`:
+- Blink twice quickly for connected, once slowly for disconnected on the peripheral side of splits
+
+For this, I prefer to delegate ble status changes to only show on
+the LED of the peripheral. To do that, I disable it in my main
+.conf, and enable them on my board_left .conf.
+
+### Indicate layer changes
+
+Enable `CONFIG_INDICATOR_LED_SHOW_LAYER_CHANGE` to show the highest active layer on every layer change
+using a sequence of N frantic blinks, where N-1 is the zero-based index of the layer.
+
 Note that this can be noisy and distracting, especially if you use conditional layers.
+Configure `CONFIG_INDICATOR_LED_MIN_LAYER_TO_SHOW_CHANGE` to the
+zero-based index of the lowest layer you want this to apply to.
+
+Blink events are queued (and I have no idea what happens if you
+overflow this queue!) so one-shots and nested layers will show as
+multiple sets of blinks.
+
+You can also configure an array of layer values for which the LED
+will stay lit at the end of its indication sequence. This is
+helpful to know when you are still/stuck in a higher layer, when
+you have set up layer toggle buttons.
 
 ## Configuration
 
-Blink durations can also be adjusted, see the [Kconfig file](Kconfig) for available config properties.
+See the [Kconfig file](Kconfig) for all of the available config properties, with descriptions. These will be more complete and up to date than the above readme.
 You can add these settings to your keyboard conf file to modify the config values, e.g. in `config/hummingbird.conf`:
 
 ```ini
-CONFIG_RGBLED_WIDGET_INTERVAL_MS=250
-CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_HIGH=50
-CONFIG_RGBLED_WIDGET_BATTERY_LEVEL_CRITICAL=10
+CONFIG_INDICATOR_LED_INTERVAL_MS=250
+CONFIG_INDICATOR_LED_BATTERY_LEVEL_HIGH=50
+CONFIG_INDICATOR_LED_BATTERY_LEVEL_CRITICAL=10
 ```
 
 ## Adding support in custom boards/shields
 
-To be able to use this widget, you need three LEDs controlled by GPIOs (_not_ smart LEDs), ideally red, green and blue colors.
-Once you have these LED definitions in your board/shield, simply set the appropriate `aliases` to the RGB LED node labels.
+To be able to use this widget, you need at least one LED controlled by GPIOs (_not_ smart LEDs).
+Once you have these LED definitions in your board/shield, simply set an `aliases` entry to `indicator-led`.
 
-As an example, here is a definition for three LEDs connected to GND and separate GPIOs for a nRF52840 controller:
+As an example, here is a definition for the user LED (connected to GND and separate GPIO) of a Nice!Nano and clones (e.g. Supermini nRF52840):
 
 ```dts
 / {
-    aliases {
-        led-red = &led0;
-        led-green = &led1;
-        led-blue = &led2;
-    };
 
     leds {
         compatible = "gpio-leds";
-        status = "okay";
-        led0: led_0 {
-            gpios = <&gpio0 26 GPIO_ACTIVE_LOW>;  // red LED, connected to P0.26
+        user_led: led_0 {
+            gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+            label = "User LED";
         };
-        led1: led_1 {
-            gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;  // green LED, connected to P0.30
-        };
-        led2: led_2 {
-            gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;  // blue LED, connected to P0.06
-        };
+    };
+
+    aliases {
+        indicator-led = &user_led;
     };
 };
 ```
 
-Finally, turn on the widget in the configuration:
+Finally, turn on the widget in the board's `.conf`:
 
 ```ini
-CONFIG_RGBLED_WIDGET=y
+CONFIG_INDICATOR_LED_WIDGET=y
 ```
