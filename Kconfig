@@ -22,6 +22,13 @@ config INDICATOR_LED_SHOW_BLE
     bool "Indicate BLE status on startup and profile change with a sequence of blinks"
         default y
 
+config INDICATOR_LED_SHOW_PERIPHERAL_BLE
+    bool "Indicate on the peripheral half of a split what its connection status is, with a sequence of blinks."
+        default y
+    depends on INDICATOR_LED_SHOW_BLE
+        help
+            Requires INDICATOR_LED_SHOW_BLE to be enabled.
+
 config INDICATOR_LED_INTERVAL_MS
     int "Minimum wait duration between blink sequences in ms"
     default 500

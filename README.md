@@ -59,9 +59,9 @@ If `CONFIG_INDICATOR_LED_SHOW_BLE=y`, on every BT profile switch (on central sid
 If `CONFIG_INDICATOR_LED_SHOW_PERIPHERAL_CONNECTED=y`:
 - Blink twice quickly for connected, once slowly for disconnected on the peripheral side of splits
 
-For this, I prefer to delegate ble status changes to only show on
-the LED of the peripheral. To do that, I disable it in my main
-.conf, and enable them on my board_left .conf.
+Most changes cannot be shown on peripheral, since events are not synced.
+[This PR](https://github.com/zmkfirmware/zmk/pull/2036) implements message passing
+between the halves and might one day be usable to fix this.
 
 ### Indicate layer changes
 

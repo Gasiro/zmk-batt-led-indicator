@@ -116,7 +116,10 @@ static void indicate_ble(void) {
         SET_BLINK_SEQUENCE(CONFIG_INDICATOR_LED_PROFILE_UNCONNECTED_PATTERN);
         blink.n_repeats = profile_index;
     }
-#else
+#endif
+#if IS_ENABLED(CONFIG_INDICATOR_LED_SHOW_PERIPHERAL_BLE) && \
+    IS_ENABLED(CONFIG_ZMK_SPLIT) && \
+    !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     if (zmk_split_bt_peripheral_is_connected()) {
         LOG_INF("Peripheral connected, blinking once");
         SET_BLINK_SEQUENCE(CONFIG_INDICATOR_LED_BLE_PROFILE_CONNECTED_PATTERN);
