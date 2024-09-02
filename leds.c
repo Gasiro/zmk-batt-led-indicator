@@ -40,6 +40,7 @@ static const uint16_t CONFIG_INDICATOR_LED_BLE_PROFILE_CONNECTED_PATTERN[] = {10
 static const uint16_t CONFIG_INDICATOR_LED_BLE_PROFILE_OPEN_PATTERN[] = {80, 80};
 // When unconnected and searching, more off than on
 static const uint16_t CONFIG_INDICATOR_LED_PROFILE_UNCONNECTED_PATTERN[] = {200, 800};
+static const uint16_t STAY_ON[] = {10};
 
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -56,15 +57,6 @@ static const uint8_t led_idx = DT_NODE_CHILD_IDX(DT_ALIAS(indicator_led));
 // flag to indicate whether the initial boot up sequence is complete
 static bool initialized = false;
 
-// blink rates as specified by different conditions
-enum blink_rate_t {
-    BLINK_OFF,     // LED off
-    BLINK_SLOW,
-    BLINK_MEDIUM,
-    BLINK_FAST,
-    BLINK_FRANTIC
-};
-
 // a blink work item as specified by the blink rate
 struct blink_item {
     const uint16_t *sequence;
@@ -74,26 +66,23 @@ struct blink_item {
 
 
 // define message queue of blink work items, that will be processed by a separate thread
-K_MSGQ_DEFINE(led_msgq, sizeof(struct blink_item), 16, 1);
+// Max 6 sequences; more in queue will be dropped.
+K_MSGQ_DEFINE(led_msgq, sizeof(struct blink_item), 6, 1);
 
 static void led_do_blink(struct blink_item blink) {
+    led_off(led_dev, led_idx);
+    k_sleep(K_MSEC(200));
     for (int n = 0; n < blink.n_repeats; n++) {
         for (int i = 0; i < blink.sequence_len; i++) {
-            // On on evens, off on odds
+            // on for evens (0 == start, off for odds. If the sequence contains an odd number, will stay on.
             if (i%2 == 0){
                 led_on(led_dev, led_idx);
             } else {
                 led_off(led_dev, led_idx);
             }
             uint16_t blink_time = blink.sequence[i];
-            // if (blink.n_repeats > 3 && n > blink.n_repeats - 3){ // last blink
-            //     // Doubled blink time on the last one because otherwise, hard
-            //     // to perceive
-            //     blink_time *= 2;
-            // }
             k_sleep(K_MSEC(blink_time));
         }
-        led_off(led_dev, led_idx);
     }
 }
 
@@ -116,6 +105,7 @@ static void indicate_ble(void) {
         SET_BLINK_SEQUENCE(CONFIG_INDICATOR_LED_PROFILE_UNCONNECTED_PATTERN);
         blink.n_repeats = profile_index;
     }
+    k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
 #endif
 #if IS_ENABLED(CONFIG_INDICATOR_LED_SHOW_PERIPHERAL_BLE) && \
     IS_ENABLED(CONFIG_ZMK_SPLIT) && \
@@ -129,9 +119,9 @@ static void indicate_ble(void) {
         SET_BLINK_SEQUENCE(CONFIG_INDICATOR_LED_PROFILE_UNCONNECTED_PATTERN);
         blink.n_repeats = 10;
     }
+    k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
 #endif
 
-    k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
 }
 
 static int led_output_listener_cb(const zmk_event_t *eh) {
@@ -210,6 +200,8 @@ static void indicate_startup_battery(void) {
         LOG_INF("Startup Battery level %d, blinking for low", battery_level);
         SET_BLINK_SEQUENCE(CONFIG_INDICATOR_LED_BATTERY_LOW_PATTERN);
         blink.n_repeats = CONFIG_INDICATOR_LED_BATTERY_LOW_BLINK_REPEAT;
+    } else {
+        blink.n_repeats = 0;
     }
 
     k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
@@ -226,10 +218,10 @@ static int led_layer_listener_cb(const zmk_event_t *eh) {
         return 0;
     }
 
-    // ignore layer off events
-    if (!as_zmk_layer_state_changed(eh)->state) {
-        return 0;
-    }
+    // // ignore layer off events
+    // if (!as_zmk_layer_state_changed(eh)->state) {
+    //     return 0;
+    // }
 
     uint8_t index = zmk_keymap_highest_layer_active()+1;
     LOG_INF("Changed to layer %d", index);
@@ -237,6 +229,14 @@ static int led_layer_listener_cb(const zmk_event_t *eh) {
         CONFIG_INDICATOR_LED_LAYER_PATTERN, index
     );
     k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
+    if (zmk_keymap_highest_layer_active() >=
+        CONFIG_INDICATOR_LED_LAYER_PERSISTENCE_THRESHOLD) {
+        blink = BLINK_STRUCT(
+            STAY_ON, 1
+        );
+        k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
+
+    }
     return 0;
 }
 

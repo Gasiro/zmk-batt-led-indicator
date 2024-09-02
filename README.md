@@ -68,12 +68,11 @@ between the halves and might one day be usable to fix this.
 Enable `CONFIG_INDICATOR_LED_SHOW_LAYER_CHANGE` to show the highest active layer on every layer change
 using a sequence of N frantic blinks, where N-1 is the zero-based index of the layer.
 
-Note that this can be noisy and distracting, especially if you use conditional layers.
-Configure `CONFIG_INDICATOR_LED_MIN_LAYER_TO_SHOW_CHANGE` to the
-zero-based index of the lowest layer you want this to apply to.
-
-Blink events are queued (and I have no idea what happens if you
-overflow this queue!) so one-shots and nested layers will show as
+<!--Note that this can be noisy and distracting, especially if you use conditional layers.-->
+<!--Configure `CONFIG_INDICATOR_LED_MIN_LAYER_TO_SHOW_CHANGE` to the-->
+<!--zero-based index of the lowest layer you want this to apply to.-->
+<!---->
+Blink events are queued up to a maximum of 3 blink sequences, so one-shots and nested layers will show as
 multiple sets of blinks.
 
 You can also configure an array of layer values for which the LED
