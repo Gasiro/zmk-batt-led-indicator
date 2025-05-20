@@ -7,7 +7,7 @@ If you have access to RGB LEDs, addressed by 3 GPIOs (e.g. on Xiao BLE), you're 
 
 ## Usage
 
-To use, first add this module to your `config/west.yml` by adding a new entry to `remotes` and `projects`:
+To use, first add this module to your `config/west.yml` by adding a new entry to `remotes` and `projects` :
 
 ```yaml west.yml
 manifest:
