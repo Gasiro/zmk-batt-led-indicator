@@ -1,1 +1,1 @@
-target_sources_ifdef(CONFIG_INDICATOR_LED_WIDGET app PRIVATE leds.c)
+target_sources_ifdef(CONFIG_INDICATOR_LED_WIDGET app PRIVATE batt_leds.c)
